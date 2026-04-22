@@ -71,7 +71,7 @@ void	send_all(int except)
 {
 	for (int fd = 0; fd <= maxfd; fd++)
 		if (FD_ISSET(fd, &wfds) && fd != except)
-			send(fd, buf_w, strlen(buf_w), 0);
+			send(fd, buf_w, strlen(buf_w), MSG_NOSIGNAL);
 }
 
 void	add_client(void)
