@@ -1,122 +1,117 @@
-# EXAM06 Study Plan — mini_serv
+# EXAM06 Study Plan — mini_serv (compressed)
 
-**Exam**: Tuesday 2026-04-14 at 10:00
-**Goal**: Reproduce `mini_serv.c` from scratch, cleanly, under pressure.
+**Now**: Wednesday 2026-04-22, 10:00
+**Exam**: Friday 2026-04-24 at 14:00 — ~52 hours, really ~2.5 working days.
+**Starting point**: PSEUDOCODE.md read, the 7 chunks (includes+helpers / globals / fatal / send_all / add_client / rm_client / read_client / main) are known.
+**Goal**: muscle memory. Reproduce `mini_serv.c` from blank in under 25 min, compile clean, pass nc tests.
 
----
-
-## Sunday 2026-04-12
-
-### Morning — 08:00 → 12:00 · Understand every line
-
-Open `mini_serv.c` side-by-side with `subject.txt` and `main.c`.
-
-- [ ] Read `subject.txt` twice. Highlight every requirement (error messages, exit codes, broadcast format, 127.0.0.1, no `#define`, no leaks).
-- [ ] List the allowed functions. Confirm none of our code uses forbidden ones (no `printf`, no `fcntl`, no `inet_addr`).
-- [ ] Walk the provided helpers from `main.c`:
-  - `extract_message(&buf, &msg)` — pulls one `\n`-terminated line out of `buf`, returns 1/0/-1.
-  - `str_join(buf, add)` — appends `add` to `buf`, frees old `buf`, returns new.
-  - Understand *exactly* what each returns and who owns the memory.
-- [ ] Walk `mini_serv.c` top to bottom. For every line, answer: **why is this line here?** If you can't answer, stop and figure it out.
-  - Globals: `sockfd, maxfd, gid, ids[], bufs[], afds/rfds/wfds, buf_w/buf_r`
-  - `fatal()` — stderr + exit 1
-  - `send_all(except)` — loop wfds, skip sender
-  - `add_client()` — accept, assign id, FD_SET, broadcast arrival
-  - `rm_client(fd)` — broadcast leave, free, FD_CLR, close
-  - `read_client(fd)` — recv → str_join → extract_message loop → broadcast
-  - `main()` — arg check, socket, bind(127.0.0.1), listen, select loop
-
-### Afternoon — 14:00 → 17:00 · Pseudocode pass
-
-- [ ] Close `mini_serv.c`. Open a blank file.
-- [ ] Write the **entire solution in pseudocode** (plain English or comments). Structure:
-  1. includes + helpers (from main.c)
-  2. globals
-  3. fatal / send_all / add_client / rm_client / read_client
-  4. main: args → socket → addr → bind → listen → select loop → dispatch
-- [ ] Compare your pseudocode against the real file. Note anything you forgot.
-
-### Evening — 20:00 → 22:00 · First blank write
-
-- [ ] Open a **blank** `.c` file. No peeking at `mini_serv.c`.
-- [ ] You *may* copy `extract_message` and `str_join` from `main.c` — that's what you'll do at the exam too.
-- [ ] Write everything else from memory.
-- [ ] Compile: `gcc -Wall -Wextra -Werror mini_serv.c -o mini_serv`
-- [ ] Test: `./mini_serv 8080` + two `nc` clients.
-- [ ] `diff` against the reference. Write down **every mistake** in `ERRORS.md`.
+The plan is rep-driven. No more "read the code and understand" time — that's done. From here it's rewrite → diff → fix → repeat.
 
 ---
 
-## Monday 2026-04-13
+## Wednesday 2026-04-22 (today)
 
-### Morning — 08:00 → 12:00 · Rewrites + diff
+### 10:00 → 12:00 · Warm-up rewrite #1 (peek-allowed)
 
-- [ ] **Rewrite #2** from blank. Compile, test, diff.
-- [ ] **Rewrite #3** from blank. Compile, test, diff.
-- [ ] After each, add any new mistakes to `ERRORS.md`.
-- [ ] Re-read `ERRORS.md` before starting each new rewrite.
+- [ ] Create `ERRORS.md` (empty, you'll fill it as you go).
+- [ ] Open a **blank** `.c` file. Paste `extract_message` + `str_join` from `main.c` (this is what you'll do at the exam).
+- [ ] Write the rest. If you blank, peek at `PSEUDOCODE.md` (not `mini_serv.c`). Note every peek in `ERRORS.md`.
+- [ ] `gcc -Wall -Wextra -Werror mini_serv.c -o mini_serv` → must be clean.
+- [ ] Test: `./mini_serv 8080`, two `nc 127.0.0.1 8080` clients, verify arrive/leave/broadcast format.
+- [ ] `diff` against `mini_serv.c`. Log every delta in `ERRORS.md`.
 
-### Afternoon — 14:00 → 17:00 · Targeted drilling
+### 14:00 → 17:00 · Rewrite #2 + #3 (blank, no peeking)
 
-- [ ] Drill the **3 magic numbers**: `2130706433` (127.0.0.1), `26` (strlen "Wrong number of arguments\n"), `12` (strlen "Fatal error\n").
-- [ ] Drill the **broadcast format strings** — exactly:
+- [ ] **Rewrite #2** from scratch. No peeking. If you get stuck: stop, re-read `ERRORS.md`, start over.
+- [ ] Compile, test with nc, diff. Update `ERRORS.md`.
+- [ ] **Rewrite #3**. Same rules. Time yourself — just to baseline, not to hit a target yet.
+- [ ] Diff. Update `ERRORS.md`.
+
+### 20:00 → 22:00 · Drill the gotchas + rewrite #4
+
+- [ ] Re-read `ERRORS.md`. Write each recurrent wrong line in its **correct** form 5× by hand.
+- [ ] Drill the **3 magic numbers** until automatic:
+  - `2130706433` → `127.0.0.1` in host byte order (use with `htonl`).
+  - `26` → `strlen("Wrong number of arguments\n")`.
+  - `12` → `strlen("Fatal error\n")`.
+- [ ] Drill the **3 format strings** verbatim:
   - `"server: client %d just arrived\n"`
   - `"server: client %d just left\n"`
-  - `"client %d: %s"` (note: `%s` already ends in `\n` because `extract_message` keeps it)
-- [ ] Drill the **sockaddr_in setup** until it's automatic.
-- [ ] **Rewrite #4**. Time yourself. Target: under 25 minutes.
-
-### Evening — 20:00 → 22:00 · Edge cases + recurrent errors
-
-- [ ] Re-read `ERRORS.md`. For each recurrent error, write the **correct** line 5 times by hand.
-- [ ] Test edge cases:
-  - Client sends a single `\n` (empty line)
-  - Client sends multi-line message in one `recv`
-  - Client sends partial line (no `\n`), then more
-  - Client connects and immediately disconnects
-  - Two clients connect simultaneously
-- [ ] **Rewrite #5**. Final rehearsal. Sleep by 23:00.
+  - `"client %d: %s"` — no trailing `\n`, `extract_message` keeps it.
+- [ ] **Rewrite #4**. Target: under 30 minutes. Compile, test, diff.
+- [ ] Sleep by 23:30.
 
 ---
 
-## Tuesday 2026-04-14 — Exam Day
+## Thursday 2026-04-23
 
-### 07:00 · Final blank rewrite
-- [ ] Wake up, coffee, no news/social media.
-- [ ] **Rewrite #6** from a blank file. Compile clean, test with nc.
-- [ ] If anything feels shaky, re-read `ERRORS.md` and that section only.
+### 08:30 → 12:00 · Timed rewrites #5 + #6
 
-### 08:30 · Stop coding
-- [ ] Close the laptop. Quick review of `ERRORS.md` on paper if helpful.
-- [ ] Shower, eat, travel buffer.
+- [ ] Re-read `ERRORS.md` before you start.
+- [ ] **Rewrite #5** blank. Target: **under 25 minutes**. Compile, test, diff.
+- [ ] **Rewrite #6** blank. Same target. If you hit it twice, you're on track.
+- [ ] Update `ERRORS.md`. If a mistake reappears for a 3rd time, escalate it: write the correct line 10× and mark it in `ERRORS.md` as "recurrent — check last".
 
-### 10:00 · Exam
-- [ ] Open main.c. Copy `extract_message` + `str_join` first.
-- [ ] Write from top to bottom in the order you practiced: includes → helpers → globals → fatal → send_all → add_client → rm_client → read_client → main.
-- [ ] Compile with `-Wall -Wextra -Werror`. Test with `nc`.
-- [ ] **Before submitting**: re-read `subject.txt` and verify every requirement.
+### 14:00 → 17:00 · Edge-case testing + targeted drills
 
----
+- [ ] On your latest rewrite, run these by hand with `nc`:
+  - Client sends a single `\n` (empty line) — broadcast should still happen.
+  - Client sends multi-line message in one send — each line broadcast separately.
+  - Client sends partial line (no `\n`), waits, then sends the rest — one broadcast only, on completion.
+  - Client connects then Ctrl-C immediately — clean rm_client, no leak.
+  - Two clients connect back-to-back — ids 0 and 1, both broadcasts land.
+  - Kill a reader while server running — `send` failure must NOT crash server (no fatal on send).
+- [ ] Drill the **sockaddr_in setup** — bzero, family, htonl(2130706433), htons(atoi(argv[1])) — write it 5× by hand from memory.
+- [ ] Drill the **select loop skeleton**: `rfds = wfds = afds;` then `select(maxfd+1, ...)` then `for fd 0..maxfd` then `break` after one event.
 
-## Critical gotchas (review daily)
+### 20:00 → 22:00 · Rewrite #7 (final rehearsal)
 
-1. **127.0.0.1** is `htonl(2130706433)`. NOT `0x00000000` (that's 0.0.0.0 = all interfaces — subject forbids this).
-2. **No `printf`** anywhere. Use `sprintf` into a buffer, then `send` or `write`.
-3. **Copy fd_sets before select**: `rfds = wfds = afds;` every iteration.
-4. `extract_message` returns **1 on success, 0 if no `\n`, -1 on malloc fail** — loop while `> 0`.
-5. `str_join` **frees the old buf** — just reassign: `bufs[fd] = str_join(bufs[fd], buf_r);`.
-6. After handling one fd, `break` out of the fd loop — keeps logic simple.
-7. `"Wrong number of arguments\n"` = **26 bytes**, `"Fatal error\n"` = **12 bytes**. Both to stderr (fd 2), exit 1.
-8. `bufs[cfd] = NULL` when a client joins — `str_join` handles `NULL` correctly.
-9. Free `bufs[fd]` on disconnect to avoid leaks.
-10. Don't `fatal()` on `send` failure — subject says lazy clients must NOT be disconnected.
+- [ ] Re-read `ERRORS.md` — both recurrent items and everything else.
+- [ ] **Rewrite #7** blank, timed, target **20 minutes**. Compile, test, diff.
+- [ ] If clean diff: you're ready. Close the laptop.
+- [ ] If not clean: one more targeted drill on the diff, then stop.
+- [ ] Sleep by 23:00.
 
 ---
 
-## Daily mantra
+## Friday 2026-04-24 — Exam Day
+
+### 08:00 · Final blank rewrite
+- [ ] Coffee. No news, no social media.
+- [ ] **Rewrite #8** from a blank file. Compile clean, test with nc, diff.
+- [ ] If a mistake pops up, fix it in your head and move on — don't spiral.
+
+### 10:00 · Stop coding
+- [ ] Close the laptop. Review `ERRORS.md` on paper if helpful (no keyboard).
+- [ ] Eat a real lunch. Travel buffer.
+
+### 14:00 · Exam
+- [ ] Open `main.c`. Copy `extract_message` + `str_join` first — don't rewrite them.
+- [ ] Write in order: **includes → helpers → globals → fatal → send_all → add_client → rm_client → read_client → main.**
+- [ ] Compile with `-Wall -Wextra -Werror`. Test with two `nc` clients.
+- [ ] Before submitting: re-read `subject.txt`, verify every requirement (exit codes, error strings, 127.0.0.1, no forbidden functions).
+
+---
+
+## Critical gotchas (glance before each rewrite)
+
+1. **127.0.0.1** → `htonl(2130706433)`. NEVER `0x00000000` (= 0.0.0.0 = all interfaces, forbidden).
+2. **No `printf`** anywhere. `sprintf` into `buf_w`, then `send` or `write`.
+3. **Copy fd_sets each iteration**: `rfds = wfds = afds;` before every `select`.
+4. `extract_message` returns `1` / `0` / `-1`. Loop while `> 0`.
+5. `str_join` **frees the old buf**. Just reassign: `bufs[fd] = str_join(bufs[fd], buf_r);`.
+6. `break` after handling one fd in the select loop — simpler and correct.
+7. `"Wrong number of arguments\n"` = 26 bytes; `"Fatal error\n"` = 12 bytes. Both stderr (fd 2), exit 1.
+8. `bufs[cfd] = NULL` on arrival — `str_join` handles NULL.
+9. `free(bufs[fd])` on disconnect, set to NULL defensively.
+10. **Do NOT `fatal()` on `send` failure** — subject says lazy clients must NOT be disconnected.
+11. Broadcast on leave happens **before** `close(fd)` — after close, `ids[fd]` is stale.
+12. `recv(fd, buf_r, sizeof(buf_r) - 1, 0)` — leave room for `'\0'`.
+
+---
+
+## Mantra (say it before each rewrite)
 
 > "Includes, helpers, globals, fatal, send_all, add, remove, read, main."
 
-Say it before each rewrite. Nine chunks, in order, no surprises.
-
-Good luck.
+Nine chunks, always the same order. Reps are the whole plan from here.
