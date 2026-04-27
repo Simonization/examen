@@ -1,32 +1,27 @@
 #!/usr/bin/env python3
 """
-Test that recv() is only called on readable fds (using &rfds), not all fds (&afds).
+Test: recv() is only called on readable fds (&rfds), NOT all fds (&afds).
 
-Common bug: Student writes:
-    if (!FD_ISSET(fd, &afds))  // BUG: should be &rfds
+Bug pattern:
+    if (!FD_ISSET(fd, &afds))  // WRONG: should be &rfds
         continue;
 
-Or in send_all:
-    if (FD_ISSET(fd, &afds) && fd != except)  // BUG: should be &wfds
-        send(...);
+Mechanism (socket behavior is BLOCKING by default):
+  - select() modifies rfds to contain only readable fds
+  - If code checks &afds instead of &rfds, it tries recv() on non-readable sockets
+  - recv() on a BLOCKING socket with no data BLOCKS indefinitely
+  - Server hangs, unable to process other clients
 
-Scenario:
-  1. Client A connects but does NOT send any data (not readable)
+Test scenario:
+  1. Client A connects but never sends (not readable)
   2. Client B connects and sends a message
-  3. If the bug exists:
-     - Code checks &afds (all connected fds) instead of &rfds (readable fds)
-     - It tries recv() on A even though A is not readable
-     - Non-blocking recv() returns -1 with EAGAIN
-     - Code checks "if (r <= 0)" and incorrectly treats EAGAIN as disconnect
-     - A is removed from the server
+  3. If bug exists:
+     - Server tries recv() on A (blocking, hangs forever)
+     - B's message is never processed or broadcast
   4. If correct:
-     - Code only checks &rfds (readable fds)
-     - It skips A and only recv() from B
-     - A stays connected and receives B's broadcast
-
-Verification:
-  - After B sends, A should still be able to receive future broadcasts
-  - If A was removed, it won't be in the server anymore (can't send/recv)
+     - select() only marks B as readable
+     - recv() only called on B
+     - B's message is broadcast to A immediately
 """
 
 import socket
@@ -36,8 +31,8 @@ import time
 import random
 
 
-def recv_until(sock, deadline, want=None):
-    """Read from socket until want is found or deadline exceeded."""
+def recv_until(sock, deadline, want_bytes=None):
+    """Read until want_bytes found or deadline, return (data, success)."""
     buf = b""
     sock.setblocking(False)
     while time.monotonic() < deadline:
@@ -46,11 +41,11 @@ def recv_until(sock, deadline, want=None):
             if chunk == b"":
                 break
             buf += chunk
-            if want is not None and want in buf:
-                return buf
+            if want_bytes and want_bytes in buf:
+                return buf, True
         except BlockingIOError:
             time.sleep(0.05)
-    return buf
+    return buf, want_bytes is None or (want_bytes in buf)
 
 
 def main():
@@ -84,57 +79,39 @@ def main():
             print("FAIL: server never came up")
             return 1
 
-        # Client A: connected, but does NOT send anything (not readable)
+        # Client A connects, then waits (doesn't send)
         time.sleep(0.1)
 
-        # Client B: connects and sends a complete message
-        b = socket.create_connection(("127.0.0.1", port))
+        # Client B connects and immediately sends a message
+        b = socket.create_connection(("127.0.0.1", port), timeout=1)
         time.sleep(0.1)
-
-        # Drain A's arrival broadcasts (for B)
-        a_got_b_arrival = recv_until(a, time.monotonic() + 0.3,
-                                      want=b"server: client 1 just arrived")
-
-        if b"server: client 1 just arrived" not in a_got_b_arrival:
-            print("FAIL: Setup sanity check: A didn't receive B's arrival broadcast")
-            return 1
-
-        # B sends a message
         b.sendall(b"test_message\n")
-        time.sleep(0.1)
 
-        # Now, if the bug exists (recv on &afds instead of &rfds):
-        # - Server tried recv() on A even though A is not readable
-        # - Non-blocking recv() returned -1 (EAGAIN)
-        # - Server removed A thinking it disconnected
+        # Now A should receive:
+        # 1. "server: client 1 just arrived\n" (B's arrival)
+        # 2. "client 1: test_message\n" (B's broadcast)
         #
-        # If correct:
-        # - Server only recv() on readable fds (B)
-        # - A stays connected
+        # If bug exists:
+        # - Server is stuck in recv() on A (blocking, no data)
+        # - Neither of the above reaches A
+        # - This times out after 2 seconds
 
-        # Test: A should still be able to receive broadcasts
-        # (If A was removed, this will timeout)
-        c = socket.create_connection(("127.0.0.1", port))
-        time.sleep(0.1)
+        start = time.monotonic()
+        a_data, success = recv_until(a, start + 2.0,
+                                      want_bytes=b"client 1: test_message\n")
+        elapsed = time.monotonic() - start
 
-        # B and C arrivals should reach A
-        a_got_c_arrival = recv_until(a, time.monotonic() + 1.0,
-                                      want=b"server: client 2 just arrived")
-
-        if b"server: client 2 just arrived" not in a_got_c_arrival:
-            print("FAIL: A did not receive C's arrival broadcast!")
-            print("  This likely means A was incorrectly removed from the server.")
-            print("  Probable cause: recv() was called on &afds instead of &rfds,")
-            print("    causing recv() on non-readable A to return -1 (EAGAIN),")
-            print("    and the code treated this as a disconnect.")
-            print(f"  A received: {a_got_c_arrival!r}")
+        if not success:
+            print("FAIL: A did not receive B's message within 2.0s")
+            print("  This indicates the server is BLOCKED trying to recv() on A.")
+            print("  Probable cause: Using &afds instead of &rfds in dispatch loop")
+            print("  Impact: recv() blocked on non-readable client A, server hung.")
+            print(f"  Data received: {a_data!r}")
             return 1
 
-        print("PASS: A remained connected and received broadcasts")
-        print("  (correctly using &rfds, not &afds)")
+        print(f"PASS: Message received in {elapsed:.3f}s (server responsive)")
+        print("  Correctly uses &rfds in dispatch loop, not &afds")
 
-        c.close()
-        b.close()
         return 0
 
     finally:
@@ -144,10 +121,6 @@ def main():
             pass
         try:
             b.close()
-        except Exception:
-            pass
-        try:
-            c.close()
         except Exception:
             pass
         server.terminate()
