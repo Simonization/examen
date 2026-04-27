@@ -87,14 +87,18 @@ def main():
         time.sleep(0.1)
         b.sendall(b"test_message\n")
 
-        # Now A should receive:
-        # 1. "server: client 1 just arrived\n" (B's arrival)
-        # 2. "client 1: test_message\n" (B's broadcast)
+        # Now A should receive B's broadcast: "client 1: test_message\n"
         #
-        # If bug exists:
-        # - Server is stuck in recv() on A (blocking, no data)
-        # - Neither of the above reaches A
-        # - This times out after 2 seconds
+        # Subject requirement: "send the messages as fast as you can"
+        # Expected: < 50ms (immediate on local socket with no buffer)
+        # Acceptable: < 200ms (system under load)
+        # Broken (blocking): > 2000ms (recv() blocked on non-readable A)
+        #
+        # If bug exists (&afds instead of &rfds):
+        # - Server tries recv() on A even though A is not readable
+        # - recv() on blocking socket with no data blocks forever
+        # - Server hung, B's message never broadcasts
+        # - Timeout after 2+ seconds confirms hang
 
         start = time.monotonic()
         a_data, success = recv_until(a, start + 2.0,
@@ -103,14 +107,22 @@ def main():
 
         if not success:
             print("FAIL: A did not receive B's message within 2.0s")
-            print("  This indicates the server is BLOCKED trying to recv() on A.")
-            print("  Probable cause: Using &afds instead of &rfds in dispatch loop")
-            print("  Impact: recv() blocked on non-readable client A, server hung.")
+            print("  Server is BLOCKED (likely recv() on non-readable socket)")
+            print("  Bug: Using &afds instead of &rfds in dispatch loop")
+            print("  Impact: recv() blocks on A, server hangs, B's message lost.")
             print(f"  Data received: {a_data!r}")
             return 1
 
-        print(f"PASS: Message received in {elapsed:.3f}s (server responsive)")
-        print("  Correctly uses &rfds in dispatch loop, not &afds")
+        if elapsed > 0.2:
+            print(f"WARN: Message took {elapsed:.3f}s (subject expects 'as fast as you can')")
+            print("  Server is working but slower than expected. Check for:")
+            print("  - Unnecessary buffering")
+            print("  - Multiple select() calls per message")
+            print("  - System overload")
+            return 1
+
+        print(f"PASS: Message received in {elapsed:.3f}s")
+        print("  Correctly uses &rfds in dispatch loop, sends fast")
 
         return 0
 
