@@ -18,24 +18,28 @@ if (!FD_ISSET(fd, &rfds))
 - `FD_ISSET(fd, &wfds)` — test if fd is in set (used in send_all with wfds for writable)
 - `FD_ISSET(fd, &rfds)` — test if fd is in set (used in main loop with rfds for readable)
 
-## 2. Kernel Functions (send, accept, recv, close, select)
+## 2. Kernel & Helper Functions (send, accept, recv, close, select, str_join, extract_message)
 
 ```c
-int cfd = accept(sockfd, NULL, NULL);
-int r = recv(fd, buf_r, sizeof(buf_r) - 1, 0);
-send(fd, buf_w, strlen(buf_w), MSG_NOSIGNAL);
-close(fd);
-if (select(maxfd + 1, &rfds, &wfds, NULL, NULL) < 0)
+add_client:         int cfd = accept(sockfd, NULL, NULL);
+read_client:        int r = recv(fd, buf_r, sizeof(buf_r) - 1, 0);
+read_client:        bufs[fd] = str_join(bufs[fd], buf_r);
+read_client:        while (extract_message(&bufs[fd], &msg) > 0)
+send_all:           send(fd, buf_w, strlen(buf_w), MSG_NOSIGNAL);
+rm_client:          close(fd);
+main:               if (select(maxfd + 1, &rfds, &wfds, NULL, NULL) < 0)
 ```
 
 **What they do:**
 - `accept(sockfd, NULL, NULL)` — pull completed handshake, return new fd
 - `recv(fd, buf_r, sizeof(buf_r) - 1, 0)` — pull bytes from socket, return count (≤0 = error/close)
+- `str_join(char *buf, char *add)` — append `add` to `buf`, return fresh malloc'd buffer (given in main.c)
+- `extract_message(char **buf, char **msg)` — extract one `\n`-terminated line into `msg`, leave remainder in `buf` (given in main.c)
 - `send(fd, buf_w, strlen(buf_w), MSG_NOSIGNAL)` — push bytes to socket, no SIGPIPE on broken pipe
 - `close(fd)` — close socket fd, kernel sends FIN
 - `select(maxfd + 1, &rfds, &wfds, NULL, NULL)` — wait for readability on rfds or writability on wfds; returns count of ready fds
 
-## 3. IF-Conditions (excluding str_join and extract_message)
+## 3. IF-Conditions
 
 ```c
 if (cfd < 0)
